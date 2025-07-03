@@ -52,57 +52,11 @@ pub const DemoState = struct {
         const pipeline_layout = gctx.createPipelineLayout(&.{bind_group_layout});
         defer gctx.releaseResource(pipeline_layout);
 
-        const pipeline = pipeline: {
-            const vs_module = zgpu.createWgslShaderModule(gctx.device, wgsl_vs, "vs");
-            defer vs_module.release();
-
-            const fs_module = zgpu.createWgslShaderModule(gctx.device, wgsl_fs, "fs");
-            defer fs_module.release();
-
-            const color_targets = [_]wgpu.ColorTargetState{.{
-                .format = zgpu.GraphicsContext.swapchain_format,
-            }};
-
-            const vertex_attributes = [_]wgpu.VertexAttribute{
-                .{ .format = .float32x3, .offset = 0, .shader_location = 0 },
-                .{ .format = .float32x3, .offset = @offsetOf(Vertex, "color"), .shader_location = 1 },
-            };
-            const vertex_buffers = [_]wgpu.VertexBufferLayout{.{
-                .array_stride = @sizeOf(Vertex),
-                .attribute_count = vertex_attributes.len,
-                .attributes = &vertex_attributes,
-            }};
-
-            const pipeline_descriptor = wgpu.RenderPipelineDescriptor{
-                .vertex = wgpu.VertexState{
-                    .module = vs_module,
-                    .entry_point = "main",
-                    .buffer_count = vertex_buffers.len,
-                    .buffers = &vertex_buffers,
-                },
-                .primitive = wgpu.PrimitiveState{
-                    .front_face = .ccw,
-                    .cull_mode = .none,
-                    .topology = .triangle_list,
-                },
-                .depth_stencil = &wgpu.DepthStencilState{
-                    .format = .depth32_float,
-                    .depth_write_enabled = true,
-                    .depth_compare = .less,
-                },
-                .fragment = &wgpu.FragmentState{
-                    .module = fs_module,
-                    .entry_point = "main",
-                    .target_count = color_targets.len,
-                    .targets = &color_targets,
-                },
-            };
-            break :pipeline gctx.createRenderPipeline(pipeline_layout, pipeline_descriptor);
-        };
-
         const bind_group = gctx.createBindGroup(bind_group_layout, &.{
             .{ .binding = 0, .buffer_handle = gctx.uniforms.buffer, .offset = 0, .size = @sizeOf(zm.Mat) },
         });
+
+        const pipeline = createPipeline(gctx, pipeline_layout);
 
         // Create a vertex buffer.
         const vertex_buffer = gctx.createBuffer(.{
@@ -152,6 +106,70 @@ pub const DemoState = struct {
     }
 
     pub fn draw(demo: *DemoState) void {
+        demo.runCommands();
+        const gctx = demo.gctx;
+
+        if (gctx.present() == .swap_chain_resized) {
+            // Release old depth texture.
+            gctx.releaseResource(demo.depth_texture_view);
+            gctx.destroyResource(demo.depth_texture);
+
+            // Create a new depth texture to match the new window size.
+            const depth = createDepthTexture(gctx);
+            demo.depth_texture = depth.texture;
+            demo.depth_texture_view = depth.view;
+        }
+    }
+
+    pub inline fn createPipeline(gctx: *zgpu.GraphicsContext, pipeline_layout: zgpu.PipelineLayoutHandle) zgpu.RenderPipelineHandle {
+        const vs_module = zgpu.createWgslShaderModule(gctx.device, wgsl_vs, "vs");
+        defer vs_module.release();
+
+        const fs_module = zgpu.createWgslShaderModule(gctx.device, wgsl_fs, "fs");
+        defer fs_module.release();
+
+        const color_targets = [_]wgpu.ColorTargetState{.{
+            .format = zgpu.GraphicsContext.swapchain_format,
+        }};
+
+        const vertex_attributes = [_]wgpu.VertexAttribute{
+            .{ .format = .float32x3, .offset = 0, .shader_location = 0 },
+            .{ .format = .float32x3, .offset = @offsetOf(Vertex, "color"), .shader_location = 1 },
+        };
+        const vertex_buffers = [_]wgpu.VertexBufferLayout{.{
+            .array_stride = @sizeOf(Vertex),
+            .attribute_count = vertex_attributes.len,
+            .attributes = &vertex_attributes,
+        }};
+
+        const pipeline_descriptor = wgpu.RenderPipelineDescriptor{
+            .vertex = wgpu.VertexState{
+                .module = vs_module,
+                .entry_point = "main",
+                .buffer_count = vertex_buffers.len,
+                .buffers = &vertex_buffers,
+            },
+            .primitive = wgpu.PrimitiveState{
+                .front_face = .ccw,
+                .cull_mode = .none,
+                .topology = .triangle_list,
+            },
+            .depth_stencil = &wgpu.DepthStencilState{
+                .format = .depth32_float,
+                .depth_write_enabled = true,
+                .depth_compare = .less,
+            },
+            .fragment = &wgpu.FragmentState{
+                .module = fs_module,
+                .entry_point = "main",
+                .target_count = color_targets.len,
+                .targets = &color_targets,
+            },
+        };
+        return gctx.createRenderPipeline(pipeline_layout, pipeline_descriptor);
+    }
+
+    pub inline fn runCommands(demo: *DemoState) void {
         const gctx = demo.gctx;
         const fb_width = gctx.swapchain_descriptor.width;
         const fb_height = gctx.swapchain_descriptor.height;
@@ -172,7 +190,6 @@ pub const DemoState = struct {
 
         const back_buffer_view = gctx.swapchain.getCurrentTextureView();
         defer back_buffer_view.release();
-
         const commands = commands: {
             const encoder = gctx.device.createCommandEncoder(null);
             defer encoder.release();
@@ -256,19 +273,8 @@ pub const DemoState = struct {
 
             break :commands encoder.finish(null);
         };
+
         defer commands.release();
-
         gctx.submit(&.{commands});
-
-        if (gctx.present() == .swap_chain_resized) {
-            // Release old depth texture.
-            gctx.releaseResource(demo.depth_texture_view);
-            gctx.destroyResource(demo.depth_texture);
-
-            // Create a new depth texture to match the new window size.
-            const depth = createDepthTexture(gctx);
-            demo.depth_texture = depth.texture;
-            demo.depth_texture_view = depth.view;
-        }
     }
 };
