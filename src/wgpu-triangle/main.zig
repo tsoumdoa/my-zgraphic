@@ -38,7 +38,7 @@ pub fn main() !void {
     //init zgui
     zgui.init(gpa);
     defer zgui.deinit();
-    _ = zgui.io.addFontFromFile("resource/" ++ "Roboto-Medium.ttf", math.floor(16.0 * scale_factor));
+    _ = zgui.io.addFontFromFile("../../public/" ++ "Roboto-Medium.ttf", math.floor(16.0 * scale_factor));
 
     zgui.backend.init(
         window,
@@ -48,6 +48,7 @@ pub fn main() !void {
     );
     defer zgui.backend.deinit();
 
+    // main loop
     while (!window.shouldClose()) {
         zglfw.pollEvents();
 

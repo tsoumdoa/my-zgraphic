@@ -138,6 +138,7 @@ pub const DemoState = struct {
             .depth_texture_view = depth.view,
         };
     }
+
     pub fn deinit(self: *DemoState) void {
         self.gctx.destroy(self.allocator);
         self.* = undefined;
@@ -148,7 +149,6 @@ pub const DemoState = struct {
             demo.gctx.swapchain_descriptor.width,
             demo.gctx.swapchain_descriptor.height,
         );
-        zgui.showDemoWindow(null);
     }
 
     pub fn draw(demo: *DemoState) void {
