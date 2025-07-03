@@ -61,21 +61,24 @@ pub const DemoState = struct {
         // Create a vertex buffer.
         const vertex_buffer = gctx.createBuffer(.{
             .usage = .{ .copy_dst = true, .vertex = true },
-            .size = 3 * @sizeOf(Vertex),
+            .size = 4 * @sizeOf(Vertex),
         });
         const vertex_data = [_]Vertex{
-            .{ .position = [3]f32{ 0.0, 0.5, 0.0 }, .color = [3]f32{ 1.0, 0.0, 0.0 } },
-            .{ .position = [3]f32{ -0.5, -0.5, 0.0 }, .color = [3]f32{ 0.0, 1.0, 0.0 } },
-            .{ .position = [3]f32{ 0.5, -0.5, 0.0 }, .color = [3]f32{ 0.0, 0.0, 1.0 } },
+            .{ .position = [3]f32{ -0.5, -0.5, 0.0 }, .color = [3]f32{ 0.0, 1.0, 1.0 } }, // 0: Bottom-Left (Cyan)
+            .{ .position = [3]f32{ 0.5, -0.5, 0.0 }, .color = [3]f32{ 1.0, 0.0, 1.0 } }, // 1: Bottom-Right (Magenta)
+            .{ .position = [3]f32{ 0.5, 0.5, 0.0 }, .color = [3]f32{ 1.0, 1.0, 0.0 } }, // 2: Top-Right (Yellow)
+            .{ .position = [3]f32{ -0.5, 0.5, 0.0 }, .color = [3]f32{ 0.0, 0.0, 0.0 } }, // 3: Top-Left (Black)
         };
+        const index_data = [_]u32{ 0, 1, 2, 0, 2, 3 };
         gctx.queue.writeBuffer(gctx.lookupResource(vertex_buffer).?, 0, Vertex, vertex_data[0..]);
 
         // Create an index buffer.
+        const vertexLength = vertex_data.len;
+        const indexLength = index_data.len;
         const index_buffer = gctx.createBuffer(.{
             .usage = .{ .copy_dst = true, .index = true },
-            .size = 3 * @sizeOf(u32),
+            .size = vertexLength * indexLength * @sizeOf(u32),
         });
-        const index_data = [_]u32{ 0, 1, 2 };
         gctx.queue.writeBuffer(gctx.lookupResource(index_buffer).?, 0, u32, index_data[0..]);
 
         // Create a depth texture and its 'view'.
@@ -174,7 +177,6 @@ pub const DemoState = struct {
         const gctx = demo.gctx;
         const fb_width = gctx.swapchain_descriptor.width;
         const fb_height = gctx.swapchain_descriptor.height;
-        // const t = @as(f32, @floatCast(gctx.stats.time));
 
         const cam_world_to_view = zm.lookAtLh(
             zm.f32x4(0.0, 0.0, -2.0, 1.0),
@@ -235,7 +237,8 @@ pub const DemoState = struct {
                     const mem = gctx.uniformsAllocate(zm.Mat, 1);
                     mem.slice[0] = zm.transpose(object_to_clip);
                     pass.setBindGroup(0, bind_group, &.{mem.offset});
-                    pass.drawIndexed(3, 1, 0, 0, 0);
+                    // index count is 6 because we have 6 indices = 2 triangles
+                    pass.drawIndexed(6, 1, 0, 0, 0);
                 }
             }
             {

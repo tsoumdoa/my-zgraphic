@@ -9,6 +9,7 @@ pub fn build(b: *std.Build) void {
 
     for ([_]struct { name: []const u8 }{
         .{ .name = "wgpu-triangle" },
+        .{ .name = "wgpu-square" },
     }) |example| {
         const exe_mod = b.createModule(.{
             .root_source_file = b.path(b.fmt("src/{s}/main.zig", .{example.name})),
