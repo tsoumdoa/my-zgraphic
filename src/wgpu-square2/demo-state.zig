@@ -156,7 +156,7 @@ pub const DemoState = struct {
             .primitive = wgpu.PrimitiveState{
                 .front_face = .ccw,
                 .cull_mode = .none,
-                .topology = .triangle_list,
+                .topology = .triangle_strip,
             },
             .depth_stencil = &wgpu.DepthStencilState{
                 .format = .depth32_float,
@@ -238,7 +238,8 @@ pub const DemoState = struct {
                     mem.slice[0] = zm.transpose(object_to_clip);
                     pass.setBindGroup(0, bind_group, &.{mem.offset});
                     // index count is 6 because we have 6 indices = 2 triangles
-                    pass.drawIndexed(6, 1, 0, 0, 0);
+                    // pass.drawIndexed(6, 1, 0, 0, 0);
+                    pass.draw(3, 1, 0, 0);
                 }
             }
             {
