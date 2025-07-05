@@ -178,18 +178,33 @@ pub const DemoState = struct {
         const fb_width = gctx.swapchain_descriptor.width;
         const fb_height = gctx.swapchain_descriptor.height;
 
+        const width_f32 = @as(f32, @floatFromInt(fb_width));
+        const height_f32 = @as(f32, @floatFromInt(fb_height));
+        const aspect_ratio = width_f32 / height_f32;
+
         const cam_world_to_view = zm.lookAtLh(
-            zm.f32x4(0.0, 0.0, -2.0, 1.0),
+            zm.f32x4(0.0, 0.0, -1.0, 0.0),
             zm.f32x4(0.0, 0.0, 0.0, 0.0),
             zm.f32x4(0.0, 1.0, 0.0, 0.0),
         );
-        const cam_view_to_clip = zm.perspectiveFovLh(
-            0.25 * math.pi,
-            @as(f32, @floatFromInt(fb_width)) / @as(f32, @floatFromInt(fb_height)),
+
+        const targetSpaceUnit = 2.0;
+
+        const cam_view_to_clip = zm.orthographicLh(
+            if (aspect_ratio > 1) targetSpaceUnit * aspect_ratio else targetSpaceUnit,
+            if (aspect_ratio > 1) targetSpaceUnit else targetSpaceUnit / aspect_ratio,
             0.01,
-            200.0,
+            100.0,
         );
         const cam_world_to_clip = zm.mul(cam_world_to_view, cam_view_to_clip);
+
+        // const cam_view_to_clip = zm.perspectiveFovLh(
+        //     0.25 * math.pi,
+        //     @as(f32, @floatFromInt(fb_width)) / @as(f32, @floatFromInt(fb_height)),
+        //     0.01,
+        //     200.0,
+        // );
+        // const cam_world_to_clip = zm.mul(cam_world_to_view, cam_view_to_clip);
 
         const back_buffer_view = gctx.swapchain.getCurrentTextureView();
         defer back_buffer_view.release();
