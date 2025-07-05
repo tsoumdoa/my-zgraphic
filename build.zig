@@ -11,6 +11,7 @@ pub fn build(b: *std.Build) void {
         .{ .name = "wgpu-triangle" },
         .{ .name = "wgpu-square" },
         .{ .name = "wgpu-square2" },
+        .{ .name = "wgpu-perlin-noise-1d" },
     }) |example| {
         const exe_mod = b.createModule(.{
             .root_source_file = b.path(b.fmt("src/{s}/main.zig", .{example.name})),

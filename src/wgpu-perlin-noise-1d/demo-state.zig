@@ -1,5 +1,4 @@
 const std = @import("std");
-const Random = std.Random;
 const math = std.math;
 const zglfw = @import("zglfw");
 const zgpu = @import("zgpu");
@@ -16,23 +15,15 @@ const Vertex = struct {
     color: [3]f32,
 };
 
-const number_of_instances = 10000;
-
-const RandomValueMatrix = struct {
-    scales: [3]@Vector(3, f32),
-};
-
 pub const DemoState = struct {
     allocator: std.mem.Allocator,
     gctx: *zgpu.GraphicsContext,
     pipeline: zgpu.RenderPipelineHandle,
     bind_group: zgpu.BindGroupHandle,
+    vertex_buffer: zgpu.BufferHandle,
+    index_buffer: zgpu.BufferHandle,
     depth_texture: zgpu.TextureHandle,
     depth_texture_view: zgpu.TextureViewHandle,
-    storage_buffer: zgpu.BufferHandle,
-    prng: *Random.DefaultPrng,
-    speed: f32 = 10.0,
-    instance_count: i32 = 1,
 
     pub fn init(allocator: std.mem.Allocator, window: *zglfw.Window) !DemoState {
         const gctx = try zgpu.GraphicsContext.create(
@@ -52,44 +43,56 @@ pub const DemoState = struct {
         );
         errdefer gctx.destroy(allocator);
 
+        // Create a bind group layout needed for our render pipeline.
         const bind_group_layout = gctx.createBindGroupLayout(&.{
             zgpu.bufferEntry(0, .{ .vertex = true }, .uniform, true, 0),
-            zgpu.bufferEntry(1, .{ .vertex = true }, .read_only_storage, false, 0),
         });
         defer gctx.releaseResource(bind_group_layout);
 
         const pipeline_layout = gctx.createPipelineLayout(&.{bind_group_layout});
         defer gctx.releaseResource(pipeline_layout);
 
-        const storage_buffer = gctx.createBuffer(.{
-            .usage = .{ .storage = true, .copy_dst = true },
-            .size = @sizeOf(RandomValueMatrix) * number_of_instances,
-        });
-
         const bind_group = gctx.createBindGroup(bind_group_layout, &.{
             .{ .binding = 0, .buffer_handle = gctx.uniforms.buffer, .offset = 0, .size = @sizeOf(zm.Mat) },
-            .{ .binding = 1, .buffer_handle = storage_buffer, .offset = 0, .size = @sizeOf(RandomValueMatrix) * number_of_instances },
         });
 
         const pipeline = createPipeline(gctx, pipeline_layout);
 
-        const depth = createDepthTexture(gctx);
-
-        var prng = Random.DefaultPrng.init(blk: {
-            var seed: u64 = undefined;
-            try std.posix.getrandom(std.mem.asBytes(&seed));
-            break :blk seed;
+        // Create a vertex buffer.
+        const vertex_buffer = gctx.createBuffer(.{
+            .usage = .{ .copy_dst = true, .vertex = true },
+            .size = 4 * @sizeOf(Vertex),
         });
+        const vertex_data = [_]Vertex{
+            .{ .position = [3]f32{ -0.5, -0.5, 0.0 }, .color = [3]f32{ 0.0, 1.0, 1.0 } }, // 0: Bottom-Left (Cyan)
+            .{ .position = [3]f32{ 0.5, -0.5, 0.0 }, .color = [3]f32{ 1.0, 0.0, 1.0 } }, // 1: Bottom-Right (Magenta)
+            .{ .position = [3]f32{ 0.5, 0.5, 0.0 }, .color = [3]f32{ 1.0, 1.0, 0.0 } }, // 2: Top-Right (Yellow)
+            .{ .position = [3]f32{ -0.5, 0.5, 0.0 }, .color = [3]f32{ 1.0, 1.0, 1.0 } }, // 3: Top-Left (Black)
+        };
+        const index_data = [_]u32{ 0, 1, 2, 0, 2, 3 };
+        gctx.queue.writeBuffer(gctx.lookupResource(vertex_buffer).?, 0, Vertex, vertex_data[0..]);
+
+        // Create an index buffer.
+        const vertexLength = vertex_data.len;
+        const indexLength = index_data.len;
+        const index_buffer = gctx.createBuffer(.{
+            .usage = .{ .copy_dst = true, .index = true },
+            .size = vertexLength * indexLength * @sizeOf(u32),
+        });
+        gctx.queue.writeBuffer(gctx.lookupResource(index_buffer).?, 0, u32, index_data[0..]);
+
+        // Create a depth texture and its 'view'.
+        const depth = createDepthTexture(gctx);
 
         return DemoState{
             .allocator = allocator,
             .gctx = gctx,
             .pipeline = pipeline,
             .bind_group = bind_group,
+            .vertex_buffer = vertex_buffer,
+            .index_buffer = index_buffer,
             .depth_texture = depth.texture,
             .depth_texture_view = depth.view,
-            .storage_buffer = storage_buffer,
-            .prng = &prng,
         };
     }
 
@@ -103,15 +106,6 @@ pub const DemoState = struct {
             demo.gctx.swapchain_descriptor.width,
             demo.gctx.swapchain_descriptor.height,
         );
-
-        zgui.setNextWindowPos(.{ .x = 20.0, .y = 20.0, .cond = .first_use_ever });
-        zgui.setNextWindowSize(.{ .w = -1.0, .h = -1.0, .cond = .first_use_ever });
-
-        if (zgui.begin("My window", .{})) {
-            _ = zgui.sliderFloat("Adjust speed", .{ .v = &demo.speed, .min = 1.0, .max = 20 });
-            _ = zgui.sliderInt("Number of box", .{ .v = &demo.instance_count, .min = 1.0, .max = 10000 });
-        }
-        zgui.end();
     }
 
     pub fn draw(demo: *DemoState) void {
@@ -141,15 +135,28 @@ pub const DemoState = struct {
             .format = zgpu.GraphicsContext.swapchain_format,
         }};
 
+        const vertex_attributes = [_]wgpu.VertexAttribute{
+            .{ .format = .float32x3, .offset = 0, .shader_location = 0 },
+            .{ .format = .float32x3, .offset = @offsetOf(Vertex, "color"), .shader_location = 1 },
+        };
+        const vertex_buffers = [_]wgpu.VertexBufferLayout{.{
+            .array_stride = @sizeOf(Vertex),
+            .attribute_count = vertex_attributes.len,
+            .step_mode = .vertex,
+            .attributes = &vertex_attributes,
+        }};
+
         const pipeline_descriptor = wgpu.RenderPipelineDescriptor{
             .vertex = wgpu.VertexState{
                 .module = vs_module,
                 .entry_point = "main",
+                .buffer_count = vertex_buffers.len,
+                .buffers = &vertex_buffers,
             },
             .primitive = wgpu.PrimitiveState{
                 .front_face = .ccw,
                 .cull_mode = .none,
-                .topology = .triangle_strip,
+                .topology = .triangle_list,
             },
             .depth_stencil = &wgpu.DepthStencilState{
                 .format = .depth32_float,
@@ -173,7 +180,6 @@ pub const DemoState = struct {
 
         const width_f32 = @as(f32, @floatFromInt(fb_width));
         const height_f32 = @as(f32, @floatFromInt(fb_height));
-
         const aspect_ratio = width_f32 / height_f32;
 
         const cam_world_to_view = zm.lookAtLh(
@@ -192,6 +198,14 @@ pub const DemoState = struct {
         );
         const cam_world_to_clip = zm.mul(cam_world_to_view, cam_view_to_clip);
 
+        // const cam_view_to_clip = zm.perspectiveFovLh(
+        //     0.25 * math.pi,
+        //     @as(f32, @floatFromInt(fb_width)) / @as(f32, @floatFromInt(fb_height)),
+        //     0.01,
+        //     200.0,
+        // );
+        // const cam_world_to_clip = zm.mul(cam_world_to_view, cam_view_to_clip);
+
         const back_buffer_view = gctx.swapchain.getCurrentTextureView();
         defer back_buffer_view.release();
         const commands = commands: {
@@ -199,10 +213,11 @@ pub const DemoState = struct {
             defer encoder.release();
 
             pass: {
+                const vb_info = gctx.lookupResourceInfo(demo.vertex_buffer) orelse break :pass;
+                const ib_info = gctx.lookupResourceInfo(demo.index_buffer) orelse break :pass;
                 const pipeline = gctx.lookupResource(demo.pipeline) orelse break :pass;
                 const bind_group = gctx.lookupResource(demo.bind_group) orelse break :pass;
                 const depth_view = gctx.lookupResource(demo.depth_texture_view) orelse break :pass;
-                const storage_buffer = gctx.lookupResource(demo.storage_buffer) orelse break :pass;
 
                 const color_attachments = [_]wgpu.RenderPassColorAttachment{.{
                     .view = back_buffer_view,
@@ -226,28 +241,19 @@ pub const DemoState = struct {
                     pass.release();
                 }
 
+                pass.setVertexBuffer(0, vb_info.gpuobj.?, 0, vb_info.size);
+                pass.setIndexBuffer(ib_info.gpuobj.?, .uint32, 0, ib_info.size);
+
                 pass.setPipeline(pipeline);
-
-                var initialData: [number_of_instances * 9]f32 = [_]f32{0.0} ** (number_of_instances * 9);
-                const time = demo.gctx.stats.time;
-                demo.prng.seed(@as(u64, @intFromFloat(time * demo.speed)));
-                const rand = demo.prng.random();
-                for (initialData, 0..) |_, i| {
-                    const d = rand.intRangeAtMost(i16, -80, 80);
-                    initialData[i] = @as(f32, @floatFromInt(d)) / 100.0;
-                }
-
-                //storage buffer
-                gctx.queue.writeBuffer(storage_buffer, 0, f32, initialData[0..]);
 
                 //draw triangle
                 {
                     const object_to_clip = cam_world_to_clip;
                     const mem = gctx.uniformsAllocate(zm.Mat, 1);
                     mem.slice[0] = zm.transpose(object_to_clip);
-                    pass.setBindGroup(0, bind_group, &.{0});
-
-                    pass.draw(5, @as(u32, @intCast(@abs(demo.instance_count))), 0, 0);
+                    pass.setBindGroup(0, bind_group, &.{mem.offset});
+                    // index count is 6 because we have 6 indices = 2 triangles
+                    pass.drawIndexed(6, 1, 0, 0, 0);
                 }
             }
             {
