@@ -1,4 +1,5 @@
 const std = @import("std");
+const Random = std.Random;
 const math = std.math;
 const zglfw = @import("zglfw");
 const zgpu = @import("zgpu");
@@ -14,6 +15,12 @@ const Vertex = struct {
     position: [3]f32,
     color: [3]f32,
 };
+const size = 400;
+
+pub fn smoothstep(x: f32) f32 {
+    const clamped_t = zm.clamp(x, 0.0, 1.0);
+    return clamped_t * clamped_t * (3.0 - 2.0 * clamped_t);
+}
 
 pub const DemoState = struct {
     allocator: std.mem.Allocator,
@@ -24,6 +31,8 @@ pub const DemoState = struct {
     index_buffer: zgpu.BufferHandle,
     depth_texture: zgpu.TextureHandle,
     depth_texture_view: zgpu.TextureViewHandle,
+    vertex_data: [size]Vertex = [_]Vertex{undefined} ** size,
+    prng: *Random.DefaultPrng,
 
     pub fn init(allocator: std.mem.Allocator, window: *zglfw.Window) !DemoState {
         const gctx = try zgpu.GraphicsContext.create(
@@ -58,28 +67,27 @@ pub const DemoState = struct {
 
         const pipeline = createPipeline(gctx, pipeline_layout);
 
+        var prng = Random.DefaultPrng.init(blk: {
+            var seed: u64 = undefined;
+            try std.posix.getrandom(std.mem.asBytes(&seed));
+            break :blk seed;
+        });
+
         // Create a vertex buffer.
         const vertex_buffer = gctx.createBuffer(.{
             .usage = .{ .copy_dst = true, .vertex = true },
-            .size = 4 * @sizeOf(Vertex),
+            .size = size * @sizeOf(Vertex),
         });
-        const vertex_data = [_]Vertex{
-            .{ .position = [3]f32{ -0.5, -0.5, 0.0 }, .color = [3]f32{ 0.0, 1.0, 1.0 } }, // 0: Bottom-Left (Cyan)
-            .{ .position = [3]f32{ 0.5, -0.5, 0.0 }, .color = [3]f32{ 1.0, 0.0, 1.0 } }, // 1: Bottom-Right (Magenta)
-            .{ .position = [3]f32{ 0.5, 0.5, 0.0 }, .color = [3]f32{ 1.0, 1.0, 0.0 } }, // 2: Top-Right (Yellow)
-            .{ .position = [3]f32{ -0.5, 0.5, 0.0 }, .color = [3]f32{ 1.0, 1.0, 1.0 } }, // 3: Top-Left (Black)
-        };
-        const index_data = [_]u32{ 0, 1, 2, 0, 2, 3 };
+
+        var vertex_data: [size]Vertex = [_]Vertex{undefined} ** size;
+
         gctx.queue.writeBuffer(gctx.lookupResource(vertex_buffer).?, 0, Vertex, vertex_data[0..]);
 
-        // Create an index buffer.
         const vertexLength = vertex_data.len;
-        const indexLength = index_data.len;
         const index_buffer = gctx.createBuffer(.{
             .usage = .{ .copy_dst = true, .index = true },
-            .size = vertexLength * indexLength * @sizeOf(u32),
+            .size = vertexLength * @sizeOf(u32),
         });
-        gctx.queue.writeBuffer(gctx.lookupResource(index_buffer).?, 0, u32, index_data[0..]);
 
         // Create a depth texture and its 'view'.
         const depth = createDepthTexture(gctx);
@@ -93,6 +101,7 @@ pub const DemoState = struct {
             .index_buffer = index_buffer,
             .depth_texture = depth.texture,
             .depth_texture_view = depth.view,
+            .prng = &prng,
         };
     }
 
@@ -156,7 +165,7 @@ pub const DemoState = struct {
             .primitive = wgpu.PrimitiveState{
                 .front_face = .ccw,
                 .cull_mode = .none,
-                .topology = .triangle_list,
+                .topology = .line_strip,
             },
             .depth_stencil = &wgpu.DepthStencilState{
                 .format = .depth32_float,
@@ -198,14 +207,6 @@ pub const DemoState = struct {
         );
         const cam_world_to_clip = zm.mul(cam_world_to_view, cam_view_to_clip);
 
-        // const cam_view_to_clip = zm.perspectiveFovLh(
-        //     0.25 * math.pi,
-        //     @as(f32, @floatFromInt(fb_width)) / @as(f32, @floatFromInt(fb_height)),
-        //     0.01,
-        //     200.0,
-        // );
-        // const cam_world_to_clip = zm.mul(cam_world_to_view, cam_view_to_clip);
-
         const back_buffer_view = gctx.swapchain.getCurrentTextureView();
         defer back_buffer_view.release();
         const commands = commands: {
@@ -246,14 +247,35 @@ pub const DemoState = struct {
 
                 pass.setPipeline(pipeline);
 
-                //draw triangle
+                const time = demo.gctx.stats.time;
+                const time_u64 = @as(u64, @intFromFloat(time * 0.8));
+
+                //draw 1D perlin noise
+                const step = 4.0 / @as(f32, @floatFromInt(size - 1));
+                for (demo.vertex_data, 0..) |_, i| {
+                    const i_f32 = @as(f32, @floatFromInt(i));
+                    const rand = demo.prng.random();
+                    demo.prng.seed((i / 50) * 100 * time_u64);
+                    const y_current = zm.mapLinearV(rand.float(f32), 0, 1, -0.9, 0.9);
+                    demo.prng.seed(((i / 50) + 1) * 100 * time_u64);
+                    const y_next = zm.mapLinearV(rand.float(f32), 0, 1, -0.9, 0.9);
+
+                    const t = @as(f32, @floatFromInt(@mod(i, 50))) / (50 - 1);
+                    const y = zm.lerpV(y_current, y_next, smoothstep(t));
+                    demo.vertex_data[i] = .{
+                        .position = [3]f32{ i_f32 * step - 2, y, 0.0 },
+                        .color = [3]f32{ 1.0, 1.0, 0.0 },
+                    };
+                }
+
+                gctx.queue.writeBuffer(gctx.lookupResource(demo.vertex_buffer).?, 0, Vertex, demo.vertex_data[0..]);
+
                 {
                     const object_to_clip = cam_world_to_clip;
                     const mem = gctx.uniformsAllocate(zm.Mat, 1);
                     mem.slice[0] = zm.transpose(object_to_clip);
                     pass.setBindGroup(0, bind_group, &.{mem.offset});
-                    // index count is 6 because we have 6 indices = 2 triangles
-                    pass.drawIndexed(6, 1, 0, 0, 0);
+                    pass.draw(size, 1, 0, 0);
                 }
             }
             {
