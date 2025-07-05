@@ -1,6 +1,6 @@
 
 @group(0) @binding(0) var<uniform> object_to_clip: mat4x4<f32>;
-@group(0) @binding(1) var<storage, read> otherStructs: array<f32>;
+@group(0) @binding(1) var<storage, read> randomValues: array<mat3x3<f32>>;
 
 struct VertexOut {
     @builtin(position) position_clip: vec4<f32>,
@@ -22,19 +22,11 @@ fn main(
         vec3<f32>(-1.0, -1.0, 0.0),
     );
 
-    var offsets = array<vec4<f32>, 2>(
-        vec4<f32>(1.0, 0.0, 0.0, 0.0),
-        vec4<f32>(-1.0, 0.0, 0.0, 0.0),
-    );
+    var randomScales = randomValues[InstanceIndex][0] / 10.0;
+    var offsets = randomValues[InstanceIndex][1] * 2.0;
+    var color = abs(randomValues[InstanceIndex][2]);
 
-    var color = array<vec3<f32>, 2>(
-        vec3<f32>(1.0, 0.0, 0.0),
-        vec3<f32>(0.0, 1.0, 0.0),
-    );
-
-
-    output.position_clip = (offsets[InstanceIndex] + vec4<f32>(pos[VertexIndex]
-		* otherStructs[InstanceIndex], 1.0)) * object_to_clip ;
-    output.color = color[InstanceIndex];
+    output.position_clip = (vec4<f32>((pos[VertexIndex]) * randomScales[0] + offsets, 1.0)) * object_to_clip ;
+    output.color = color;
     return output;
 }
